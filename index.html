@@ -1,0 +1,104 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="店内音楽">
+<meta name="robots" content="noindex"><meta name="theme-color" content="#05070f">
+<link rel="apple-touch-icon" href="icon.png"><link rel="icon" href="icon.png"><link rel="manifest" href="manifest.json">
+<title>店内音楽</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#05070f;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Hiragino Sans",sans-serif;overflow:hidden;-webkit-user-select:none;user-select:none}
+#bg{position:fixed;inset:-80px;background:linear-gradient(135deg,#122150,#05070f);background-size:cover;background-position:center;filter:blur(70px) saturate(1.5);opacity:.75;transition:background-image .8s}
+#shade{position:fixed;inset:0;background:rgba(0,0,0,.34)}
+main{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;gap:44px;padding:calc(28px + env(safe-area-inset-top)) calc(40px + env(safe-area-inset-right)) calc(84px + env(safe-area-inset-bottom)) calc(40px + env(safe-area-inset-left))}
+#art{position:relative;flex:0 1 46%;max-width:560px;aspect-ratio:16/9;border-radius:26px;overflow:hidden;background:rgba(255,255,255,.06);border:.8px solid rgba(255,255,255,.25);box-shadow:0 16px 60px rgba(0,0,0,.45)}
+#art iframe,#p{position:absolute;inset:0;width:100%;height:100%;border:0}
+#side{flex:1 1 0;min-width:0;max-width:520px;display:flex;flex-direction:column;align-items:flex-start;gap:28px}
+#title{font-size:26px;font-weight:600;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#author{font-size:17px;color:rgba(255,255,255,.7);margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#names{max-width:100%}
+.glass{background:rgba(255,255,255,.14);-webkit-backdrop-filter:blur(24px) saturate(1.8);backdrop-filter:blur(24px) saturate(1.8);border:.6px solid rgba(255,255,255,.28);box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 8px 30px rgba(0,0,0,.25)}
+#play{width:96px;height:96px;border-radius:50%;color:#fff;display:grid;place-items:center;cursor:pointer;padding:0;transition:transform .12s}
+#play:active{transform:scale(.94)}#play:disabled{opacity:.5}
+#play svg{width:38px;height:38px;fill:#fff}
+#play .spin{width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,.3);border-top-color:#fff;animation:r 1s linear infinite}
+@keyframes r{to{transform:rotate(360deg)}}
+#status{position:fixed;left:calc(24px + env(safe-area-inset-left));bottom:calc(22px + env(safe-area-inset-bottom));height:36px;padding:0 14px;border-radius:18px;display:flex;align-items:center;gap:7px;font-size:13px;font-weight:500;color:rgba(255,255,255,.88);font-variant-numeric:tabular-nums;max-width:calc(100vw - 48px);white-space:nowrap}
+#status svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;flex:none}
+#status.warn{color:#ffd60a}
+@media (orientation:portrait){
+ main{flex-direction:column;gap:26px;padding:calc(24px + env(safe-area-inset-top)) 24px calc(84px + env(safe-area-inset-bottom))}
+ #art{flex:0 0 auto;width:100%}#side{flex:0 0 auto;align-items:center;text-align:center;gap:30px;width:100%}
+ #play{width:88px;height:88px}
+}
+@media (prefers-reduced-motion:reduce){#bg{transition:none}#play .spin{animation-duration:2s}}
+@media (prefers-reduced-transparency:reduce){.glass{background:rgba(60,60,70,.92);-webkit-backdrop-filter:none;backdrop-filter:none}}
+</style></head><body>
+<div id="bg"></div><div id="shade"></div>
+<main>
+  <div id="art"><div id="p"></div></div>
+  <div id="side">
+    <div id="names"><div id="title">casa 店内音楽</div><div id="author">準備中</div></div>
+    <button id="play" class="glass" disabled aria-label="再生"></button>
+  </div>
+</main>
+<div id="status" class="glass"><svg viewBox="0 0 16 16"><path d="M2 6v4M5 4v8M8 2v12M11 5v6M14 6.5v3"/></svg><span id="st">音量を自動でそろえます</span></div>
+<script>
+const LIST="PLPskLPTHFZLBVPbK7wmZdVFAxeb-urXlA";
+const Q=new URLSearchParams(location.search), MUTE=Q.get('mute')==='1';   // mute=1 は確認用（音を出さない）
+const TARGET=-22, UNKNOWN=-12, MAXDOWN=-30, YTNORM=-14;
+const $=id=>document.getElementById(id);
+const ICON={play:'<svg viewBox="0 0 24 24" style="margin-left:4px"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z"/></svg>',
+  pause:'<svg viewBox="0 0 24 24"><rect x="5" y="4" width="5" height="16" rx="1.5"/><rect x="14" y="4" width="5" height="16" rx="1.5"/></svg>',spin:'<div class="spin"></div>'};
+let curves={},player,ready=false,playing=false,loading=false,vid='',gain=0,errs=0,lock=null,measured=true,lastVol=-1;
+// この端末でページから音量を動かせるか（iPhone は動かせない）
+const settable=(()=>{try{const a=document.createElement('audio');a.volume=0.5;return Math.abs(a.volume-0.5)<0.01}catch(e){return false}})();
+fetch('curves.json',{cache:'no-cache'}).then(r=>r.json()).then(j=>{curves=j;measured=!vid||!!curves[vid]}).catch(()=>{});
+
+// 先に測った10秒ごとの大きさから、今の位置での下げ幅（dB、0以下）を決める。前10秒〜先20秒で見るので、大きくなる前に下がり始める
+function want(id,pos){
+  const cv=curves[id]; if(!cv||!cv.c.length)return clamp(TARGET-Math.min(UNKNOWN,YTNORM));
+  const norm=Math.min(0,YTNORM-cv.I);                 // YouTube 自身が大きい動画を下げる分
+  const k=Math.floor(pos/cv.step),lo=Math.max(0,k-1),hi=Math.min(cv.c.length-1,k+2),gate=Math.max(cv.I-20,-45);
+  let s=0,n=0;for(let i=lo;i<=hi;i++)if(cv.c[i]>gate){s+=Math.pow(10,cv.c[i]/10);n++}
+  const loud=n?10*Math.log10(s/n):cv.I;
+  return clamp(TARGET-(loud+norm));
+}
+const clamp=g=>Math.min(0,Math.max(MAXDOWN,g));
+
+function onYouTubeIframeAPIReady(){
+  player=new YT.Player('p',{width:'100%',height:'100%',
+    playerVars:{listType:'playlist',list:LIST,playsinline:1,controls:0,rel:0,fs:0,disablekb:1,iv_load_policy:3},
+    events:{onReady(){ready=true;if(MUTE)player.mute();player.setLoop(true);player.setShuffle(true);draw()},
+      onStateChange(e){const s=e.data;playing=s===1;if(s===1||s===2)loading=false;if(s===1)errs=0;sync();draw()},
+      onError(){errs++;if(errs<8)setTimeout(()=>player.nextVideo(),800)}}});
+}
+function sync(){
+  const d=player.getVideoData&&player.getVideoData()||{};
+  if(d.video_id&&d.video_id!==vid){vid=d.video_id;measured=!!curves[vid];gain=want(vid,0);apply();
+    $('bg').style.backgroundImage='url(https://i.ytimg.com/vi/'+vid+'/hqdefault.jpg)'}
+  if(d.title)$('title').textContent=d.title;
+  if(d.author)$('author').textContent=d.author;
+}
+function apply(){const v=Math.round(100*Math.pow(10,gain/20));if(v!==lastVol){lastVol=v;player.setVolume(v)}}
+setInterval(()=>{
+  if(!ready)return; sync();
+  if(vid){const w=want(vid,player.getCurrentTime()||0),d=w-gain;gain+=Math.max(-3,Math.min(0.5,d));apply()}   // 上げは1秒に1dB、下げは1秒に6dBまで
+  draw();
+},500);
+function draw(){
+  const b=$('play');b.disabled=!ready;b.innerHTML=loading?ICON.spin:playing?ICON.pause:ICON.play;b.setAttribute('aria-label',playing?'止める':'再生');
+  if(!vid)$('author').textContent=ready?'再生ボタンで始まります':'準備中';
+  const st=$('status');st.classList.toggle('warn',!settable);
+  $('st').textContent=!settable?'この端末は音量を自動で動かせません':!playing?'音量を自動でそろえます':measured?'音量を自動調整中  '+Math.round(gain)+' dB':'この動画は未測定（標準の下げ幅）';
+}
+$('play').onclick=()=>{
+  if(playing||loading){loading=false;player.pauseVideo()}
+  else{loading=true;player.playVideo();setTimeout(()=>{if(loading&&!playing){loading=false;$('author').textContent='動画をタップして再生してください';draw()}},6000);
+    if(navigator.wakeLock)navigator.wakeLock.request('screen').then(l=>lock=l).catch(()=>{})}   // 流している間は画面を消さない
+  draw();
+};
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&playing&&navigator.wakeLock)navigator.wakeLock.request('screen').then(l=>lock=l).catch(()=>{})});
+window.__dbg=()=>({vid,gain,vol:player.getVolume(),muted:player.isMuted(),pos:player.getCurrentTime(),playing,settable,measured,want:want(vid,player.getCurrentTime()||0)});
+draw();
+</script><script src="https://www.youtube.com/iframe_api"></script></body></html>
