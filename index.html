@@ -26,6 +26,19 @@ main{position:fixed;inset:0;display:flex;align-items:center;justify-content:cent
 #status{position:fixed;left:calc(24px + env(safe-area-inset-left));bottom:calc(22px + env(safe-area-inset-bottom));height:36px;padding:0 14px;border-radius:18px;display:flex;align-items:center;gap:7px;font-size:13px;font-weight:500;color:rgba(255,255,255,.88);font-variant-numeric:tabular-nums;max-width:calc(100vw - 48px);white-space:nowrap}
 #status svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;flex:none}
 #status.warn{color:#ffd60a}
+#meterBtn{position:fixed;right:calc(24px + env(safe-area-inset-right));bottom:calc(22px + env(safe-area-inset-bottom));height:36px;padding:0 14px;border-radius:18px;color:#fff;font:600 13px -apple-system,sans-serif;cursor:pointer}
+#meter{position:fixed;inset:0;z-index:9;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45)}
+#meter.on{display:flex}
+#mcard{width:min(420px,calc(100vw - 32px));border-radius:30px;padding:26px 24px 22px;text-align:center}
+#mnow{font-size:72px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.1}
+#mnow small{font-size:22px;font-weight:500;margin-left:4px;opacity:.7}
+#mmsg{font-size:20px;font-weight:600;margin:10px 0 4px}
+#msub{font-size:13px;color:rgba(255,255,255,.65);min-height:18px}
+#mbar{position:relative;height:8px;border-radius:4px;background:rgba(255,255,255,.18);margin:20px 0 22px}
+#mbar i{position:absolute;top:-4px;width:4px;height:16px;border-radius:2px;background:#fff;left:50%;transition:left .3s}
+#mbar b{position:absolute;inset:0 calc(50% - 8%) 0 calc(50% - 8%);border-radius:4px;background:rgba(48,209,88,.55)}
+#mclose{height:46px;width:100%;border-radius:23px;border:0;background:rgba(255,255,255,.2);color:#fff;font:600 16px -apple-system,sans-serif}
+.ok{color:#30d158}.up{color:#64d2ff}.down{color:#ffd60a}
 @media (orientation:portrait){
  main{flex-direction:column;gap:26px;padding:calc(24px + env(safe-area-inset-top)) 24px calc(84px + env(safe-area-inset-bottom))}
  #art{flex:0 0 auto;width:100%}#side{flex:0 0 auto;align-items:center;text-align:center;gap:30px;width:100%}
@@ -43,6 +56,14 @@ main{position:fixed;inset:0;display:flex;align-items:center;justify-content:cent
   </div>
 </main>
 <div id="status" class="glass"><svg viewBox="0 0 16 16"><path d="M2 6v4M5 4v8M8 2v12M11 5v6M14 6.5v3"/></svg><span id="st">音量を自動でそろえます</span></div>
+<button id="meterBtn" class="glass">65dB に合わせる</button>
+<div id="meter"><div id="mcard" class="glass">
+  <div id="mnow">--<small>dB</small></div>
+  <div id="mmsg">測っています</div>
+  <div id="msub">スピーカーの近くではなく、お客さんの席で測ってください</div>
+  <div id="mbar"><b></b><i id="mpin"></i></div>
+  <button id="mclose">閉じる</button>
+</div></div>
 <script>
 const LIST="PLPskLPTHFZLBVPbK7wmZdVFAxeb-urXlA";
 const Q=new URLSearchParams(location.search), MUTE=Q.get('mute')==='1';   // mute=1 は確認用（音を出さない）
@@ -99,6 +120,46 @@ $('play').onclick=()=>{
   draw();
 };
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&playing&&navigator.wakeLock)navigator.wakeLock.request('screen').then(l=>lock=l).catch(()=>{})});
+
+// 65dB に合わせる：この端末のマイクで部屋の音の大きさを測り、上げる・下げるを出す（目安。端末ごとの差で数dBずれる）
+const GOAL=65, CAL=parseFloat(Q.get('cal')||'100');   // CAL：マイクの数値を dB に直す足し算（実機で未校正）
+let mStream,mCtx,mTimer,mHist=[];
+$('meterBtn').onclick=async()=>{
+  $('meter').classList.add('on');$('mmsg').textContent='測っています';$('mmsg').className='';
+  try{
+    mStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+    mCtx=new (window.AudioContext||window.webkitAudioContext)();
+    const src=mCtx.createMediaStreamSource(mStream);
+    // 人の耳の感じ方に近づける（低い音と、ごく高い音を弱める）
+    const h1=mCtx.createBiquadFilter();h1.type='highpass';h1.frequency.value=200;
+    const h2=mCtx.createBiquadFilter();h2.type='highpass';h2.frequency.value=200;
+    const l1=mCtx.createBiquadFilter();l1.type='lowpass';l1.frequency.value=10000;
+    const an=mCtx.createAnalyser();an.fftSize=4096;const buf=new Float32Array(an.fftSize);
+    src.connect(h1);h1.connect(h2);h2.connect(l1);l1.connect(an);
+    mHist=[];
+    mTimer=setInterval(()=>{
+      an.getFloatTimeDomainData(buf);let s=0;for(const x of buf)s+=x*x;
+      mHist.push(s/buf.length);if(mHist.length>30)mHist.shift();     // 直近3秒の平均
+      const db=10*Math.log10(mHist.reduce((a,b)=>a+b,0)/mHist.length+1e-12)+CAL;
+      showDb(db);
+    },100);
+  }catch(e){$('mmsg').textContent='マイクを使えません';$('msub').textContent='マイクの使用を許可してから、もう一度押してください'}
+};
+function showDb(db){
+  const d=Math.round(db), diff=db-GOAL;
+  $('mnow').innerHTML=d+'<small>dB</small>';
+  const m=$('mmsg');
+  if(mHist.length<10){m.textContent='測っています';m.className='';}
+  else if(Math.abs(diff)<=2){m.textContent='ちょうど 65dB です';m.className='ok'}
+  else if(diff<0){m.textContent='音量を上げてください（あと '+Math.round(-diff)+'dB）';m.className='up'}
+  else{m.textContent='音量を下げてください（あと '+Math.round(diff)+'dB）';m.className='down'}
+  $('msub').textContent='目標 65dB ・ 音楽を流したまま測ります';
+  $('mpin').style.left=Math.max(0,Math.min(100,50+diff*4))+'%';
+}
+$('mclose').onclick=()=>{
+  $('meter').classList.remove('on');clearInterval(mTimer);
+  if(mStream)mStream.getTracks().forEach(t=>t.stop());if(mCtx)mCtx.close();mStream=mCtx=null;
+};
 window.__dbg=()=>({vid,gain,vol:player.getVolume(),muted:player.isMuted(),pos:player.getCurrentTime(),playing,settable,measured,want:want(vid,player.getCurrentTime()||0)});
 draw();
 </script><script src="https://www.youtube.com/iframe_api"></script></body></html>
